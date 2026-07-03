@@ -525,6 +525,17 @@ pub struct Session {
     /// reads take the walk, and bounds/role/attributes are enriched live
     /// per matched element.
     cache_resolution: std::sync::atomic::AtomicBool,
+    /// The last pointer position warped to via [`pointer_motion_absolute`]
+    /// (#67). Wheel events route to the pointer-FOCUS surface, and a bare
+    /// absolute warp does not bind focus on headless mutter — the same
+    /// cold-start flake `pointer_warmup_to` fixes for buttons — so
+    /// [`pointer_axis_discrete`](Self::pointer_axis_discrete) re-runs the
+    /// warmup at this position when focus isn't known to be bound.
+    last_pointer_pos: std::sync::Mutex<Option<(f64, f64)>>,
+    /// Whether pointer focus is currently bound by a completed warmup (#67).
+    /// Set by [`pointer_warmup_to`]; cleared by a bare
+    /// [`pointer_motion_absolute`] warp (which gives no binding guarantee).
+    pointer_focus_bound: std::sync::atomic::AtomicBool,
     /// Whether this session runs against the isolated per-session GSettings
     /// keyfile store, copied from [`SessionConfig::gsettings_isolated`] at
     /// start. [`set_setting`](Self::set_setting) requires it: a live keyfile
@@ -823,6 +834,8 @@ impl Session {
             gtk_actions: tokio::sync::OnceCell::new(),
             default_timeout_ns: AtomicU64::new(resolve_default_timeout().as_nanos() as u64),
             cache_resolution: std::sync::atomic::AtomicBool::new(false),
+            last_pointer_pos: std::sync::Mutex::new(None),
+            pointer_focus_bound: std::sync::atomic::AtomicBool::new(false),
             gsettings_isolated: cfg.gsettings_isolated,
             cancellation,
             app,
@@ -1015,6 +1028,12 @@ impl Session {
     /// pixels. Requires an active capture stream on backends that route
     /// through the compositor's ScreenCast pipeline (mutter).
     pub async fn pointer_motion_absolute(&self, x: f64, y: f64) -> Result<()> {
+        // A bare warp gives no pointer-focus-binding guarantee (#67): remember
+        // where the pointer is so a following axis event can warm up here,
+        // and drop any binding a previous warmup established.
+        *self.last_pointer_pos.lock().unwrap() = Some((x, y));
+        self.pointer_focus_bound
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         self.input
             .pointer_motion_absolute(x, y, &self.cancellation)
             .await
@@ -1068,6 +1087,21 @@ impl Session {
     /// vertical or horizontal; `steps` is the number of wheel detents
     /// — positive scrolls down/right, negative scrolls up/left.
     pub async fn pointer_axis_discrete(&self, axis: PointerAxis, steps: i32) -> Result<()> {
+        // Wheel events route to the pointer-FOCUS surface. A bare absolute
+        // warp does not bind focus on headless mutter, so scroll after a
+        // plain `pointer_motion_absolute` used to be silently swallowed —
+        // the #65 cold-start flake in axis form (#67). Re-run the calibrated
+        // warmup at the last warped position before scrolling, unless a
+        // warmup already bound focus there.
+        if !self
+            .pointer_focus_bound
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            let pos = *self.last_pointer_pos.lock().unwrap();
+            if let Some((x, y)) = pos {
+                self.pointer_warmup_to(x, y).await?;
+            }
+        }
         self.input
             .pointer_axis_discrete(axis, steps, &self.cancellation)
             .await
@@ -1275,6 +1309,10 @@ impl Session {
         } else {
             self.pointer_motion_absolute(cx, cy).await?;
         }
+        // The approach-then-settle motions above are what binds focus; record
+        // it so a following axis event skips the redundant warmup (#67).
+        self.pointer_focus_bound
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -2253,6 +2291,8 @@ impl Session {
             gtk_actions: tokio::sync::OnceCell::new(),
             default_timeout_ns: AtomicU64::new(FALLBACK_DEFAULT_TIMEOUT.as_nanos() as u64),
             cache_resolution: std::sync::atomic::AtomicBool::new(false),
+            last_pointer_pos: std::sync::Mutex::new(None),
+            pointer_focus_bound: std::sync::atomic::AtomicBool::new(false),
             // Mock sessions have no real isolated keyfile store, so live
             // `set_setting` is unavailable (it returns the isolation-required
             // error); tests that need it construct a real session.
