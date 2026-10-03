@@ -1,0 +1,97 @@
+name: Cachix
+
+# This fork's one addition to upstream: build the Nix `mcp` package and push
+# it to the danielbodart Cachix cache, so a NixOS config can substitute it
+# instead of compiling the workspace.
+#
+# A config that `follows` its own nixpkgs only hits the cache when the
+# derivation was built against that exact nixpkgs, so besides this flake's
+# own lock it is built against the current heads of the stable and unstable
+# channels, where a config's nixpkgs lands after `nix flake update`. The
+# schedule catches each channel advance; a build already in the cache is
+# substituted, not rebuilt. workflow_dispatch takes any other nixpkgs ref or
+# rev to fill the cache for a config pinned behind the heads.
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "41 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      nixpkgs:
+        description: nixpkgs ref or rev to build against, beside the lock and the channel heads
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cachix-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Merge upstream's main before a scheduled build. Fails, and so says so,
+  # when that needs a hand: a conflict, or an upstream change to a workflow,
+  # which GITHUB_TOKEN may not push.
+  sync:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh api -X POST "repos/${{ github.repository }}/merge-upstream" -f branch=main
+
+  matrix:
+    needs: sync
+    if: always() && (needs.sync.result == 'success' || needs.sync.result == 'skipped')
+    runs-on: ubuntu-latest
+    outputs:
+      nixpkgs: ${{ steps.refs.outputs.nixpkgs }}
+    steps:
+      - id: refs
+        env:
+          EXTRA: ${{ inputs.nixpkgs }}
+        run: |
+          refs='["lock","nixos-26.05","nixos-unstable"]'
+          if [ -n "$EXTRA" ]; then
+            refs=$(jq -c --arg r "$EXTRA" '. + [$r]' <<<"$refs")
+          fi
+          echo "nixpkgs=$refs" >>"$GITHUB_OUTPUT"
+
+  build:
+    needs: matrix
+    strategy:
+      fail-fast: false
+      matrix:
+        nixpkgs: ${{ fromJSON(needs.matrix.outputs.nixpkgs) }}
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+
+      - uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
+        with:
+          name: danielbodart
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - name: Build .#mcp against ${{ matrix.nixpkgs }}
+        env:
+          NIXPKGS: ${{ matrix.nixpkgs }}
+        run: |
+          if [ "$NIXPKGS" = lock ]; then
+            override=()
+          else
+            override=(--override-input nixpkgs "github:NixOS/nixpkgs/$NIXPKGS")
+          fi
+          nix build -L .#mcp "${override[@]}"
+          echo "\`$NIXPKGS\` on \`$(uname -m)\`: \`$(readlink result)\`" >>"$GITHUB_STEP_SUMMARY"
