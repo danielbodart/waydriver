@@ -62,6 +62,9 @@ jobs:
 
   build:
     needs: matrix
+    # sync is skipped outside the schedule, and a skip would otherwise
+    # propagate past matrix to here.
+    if: always() && needs.matrix.result == 'success'
     strategy:
       fail-fast: false
       matrix:
