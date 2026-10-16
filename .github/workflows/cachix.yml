@@ -70,6 +70,12 @@ jobs:
       matrix:
         nixpkgs: ${{ fromJSON(needs.matrix.outputs.nixpkgs) }}
         runner: [ubuntu-latest, ubuntu-24.04-arm]
+    # nixos-unstable's rustc 1.98.1 is linked against LLVM 21, but 1.98's
+    # stdarch emits LLVM 22's AVX-512 VNNI intrinsic signatures, so rten-gemm
+    # fails on x86_64 ("intrinsic signature mismatch for
+    # llvm.x86.avx512.vpdpbusd.512"). Nothing can build it there until
+    # nixpkgs fixes rustc; drop this once that cell is green again.
+    continue-on-error: ${{ matrix.nixpkgs == 'nixos-unstable' && matrix.runner == 'ubuntu-latest' }}
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
