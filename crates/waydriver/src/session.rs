@@ -619,6 +619,7 @@ pub struct Session {
     /// session start. Read every time `Substring`-mode matching
     /// runs and every time `list_text` / `list_labelled_regions`
     /// builds blocks.
+    #[cfg_attr(not(feature = "visual"), allow(dead_code))]
     pub(crate) visual_text_tuning: VisualTextTuning,
     /// Visual click tuning copied from [`SessionConfig`] at session
     /// start. Read by the cold-start warmup paths in
@@ -2061,7 +2062,7 @@ impl Session {
     /// Requires the `visual` Cargo feature. The PNG is decoded once
     /// at construction time and the screenshot is taken anew on each
     /// terminal-method call, so the locator survives between calls.
-    #[cfg(feature = "visual")]
+    #[cfg(feature = "visual-image")]
     pub fn find_image(self: &Arc<Self>, png_bytes: &[u8]) -> Result<crate::visual::ImageLocator> {
         crate::visual::ImageLocator::new(self.clone(), png_bytes, None)
     }
@@ -2083,7 +2084,7 @@ impl Session {
     /// element-scoped counterpart that captures the crop for you.
     ///
     /// Requires the `visual` Cargo feature.
-    #[cfg(feature = "visual")]
+    #[cfg(feature = "visual-image")]
     pub fn compare_to_baseline(
         &self,
         actual_png: &[u8],
@@ -2112,7 +2113,7 @@ impl Session {
     ///
     /// Requires the `visual` Cargo feature. Tolerance comes from
     /// [`SessionConfig::visual_region_tuning`].
-    #[cfg(feature = "visual")]
+    #[cfg(feature = "visual-image")]
     pub async fn region_at(
         self: &Arc<Self>,
         x: i32,

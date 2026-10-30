@@ -51,9 +51,15 @@
 //! `set_text`, `focus`, or any `is_<state>` predicate — those require
 //! AT-SPI handles, and faking them visually would mask real bugs.
 
+// Without OCR (`visual-image` alone) the region sweep and text-tuning
+// plumbing that only `find_by_text` scopes reach go unused.
+#![cfg_attr(not(feature = "visual"), allow(dead_code, unused_imports))]
+
 mod baseline;
 mod color;
+#[cfg(feature = "visual")]
 mod engine;
+#[cfg(feature = "visual")]
 mod models;
 mod region;
 mod template;
@@ -82,6 +88,7 @@ pub(crate) async fn cold_start_click(session: &Arc<Session>, cx: f64, cy: f64) -
 }
 
 pub use baseline::{compare_to_baseline, diff_to_baseline, BaselineComparison};
+#[cfg(feature = "visual")]
 pub(crate) use engine::{ensure_engine, EngineResult};
 pub use region::{RegionLocator, Shape};
 pub use template::ImageLocator;
@@ -96,11 +103,15 @@ pub(crate) use region::sweep_regions as __region_sweep;
 
 // Locator::list_text and Locator::list_labelled_regions reach into
 // the visual module through these re-exports.
+#[cfg(feature = "visual")]
 pub(crate) use list_labelled_regions as __list_labelled_regions;
+#[cfg(feature = "visual")]
 pub(crate) use list_text as __list_text;
 // Session::recognized_text reaches in through this one.
+#[cfg(feature = "visual")]
 pub(crate) use recognized_text as __recognized_text;
 
+#[cfg(feature = "visual")]
 /// A recognised text line on screen — what
 /// [`Locator::list_text`](crate::Locator::list_text) returns for each
 /// OCR-detected text. The `bounds` rectangle is the union bbox of all
@@ -115,6 +126,7 @@ pub struct TextHit {
     pub bounds: Rect,
 }
 
+#[cfg(feature = "visual")]
 /// How [`VisualLocator`] matches OCR-recognized words against the search
 /// text.
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,6 +147,7 @@ pub enum MatchMode {
     Fuzzy,
 }
 
+#[cfg(feature = "visual")]
 /// Visual (OCR-backed) locator. See [module docs](self) for cost and
 /// when to use this vs the AT-SPI [`Locator`](crate::Locator).
 ///
@@ -156,6 +169,7 @@ pub struct VisualLocator {
     upscale: Option<u32>,
 }
 
+#[cfg(feature = "visual")]
 impl std::fmt::Debug for VisualLocator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("VisualLocator")
@@ -169,6 +183,7 @@ impl std::fmt::Debug for VisualLocator {
     }
 }
 
+#[cfg(feature = "visual")]
 /// Auto-wait default for visual (OCR) locators when no per-locator timeout is
 /// set. Deliberately *higher* than the AT-SPI locator default: one OCR pass is
 /// tens of seconds on CPU (no GPU), so a 5s-style default would time out before
@@ -176,6 +191,7 @@ impl std::fmt::Debug for VisualLocator {
 /// `with_timeout(...)` on genuinely slow hardware, or a short one to fail fast.
 const VISUAL_DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 
+#[cfg(feature = "visual")]
 impl VisualLocator {
     pub(crate) fn new(session: Arc<Session>, text: impl Into<String>) -> Self {
         Self {
@@ -511,6 +527,7 @@ impl VisualLocator {
     }
 }
 
+#[cfg(feature = "visual")]
 /// One OCR'd line: the joined text, the union bbox of all words on
 /// it, and the per-word breakdown the matcher needs to compute
 /// substring hits at word granularity.
@@ -532,6 +549,7 @@ struct OcrLine {
     spans: Vec<(usize, usize)>,
 }
 
+#[cfg(feature = "visual")]
 /// A geometric cluster of consecutive OCR lines that visually form
 /// a single multi-line label (a wrapped paragraph, a stacked button
 /// label, etc.). Built by [`group_lines_into_blocks`] from a flat
@@ -568,6 +586,7 @@ struct OcrBlock {
     line_break_word_indices: Vec<usize>,
 }
 
+#[cfg(feature = "visual")]
 /// Image + crop origin needed for pixel-level boundary checks
 /// during block grouping. Built from `OcrResult` at call sites that
 /// have a real screenshot in hand. Unit tests that exercise the
@@ -577,6 +596,7 @@ struct BoundaryContext<'a> {
     crop_origin: (i32, i32),
 }
 
+#[cfg(feature = "visual")]
 /// Sample a pixel in image (crop) coordinates from a screen-coord
 /// position. Returns `None` if the position falls outside the
 /// image bounds.
@@ -597,6 +617,7 @@ fn sample_pixel_at_screen(
     Some(*ctx.image.get_pixel(crop_x as u32, crop_y as u32))
 }
 
+#[cfg(feature = "visual")]
 /// Boundary-check predicate: should we let `prev` and `next` merge
 /// into the same block given the image evidence? Returns `false`
 /// when a visual boundary (background-colour change or divider
@@ -718,6 +739,7 @@ fn merge_passes_boundary_check(
     true
 }
 
+#[cfg(feature = "visual")]
 /// Bounded BFS in the gap between two candidate-merge lines. Seeds
 /// at the prev-line's bottom-bg pixel (in crop coords) and accepts
 /// the merge only if the flood reaches the next-line's top-bg pixel
@@ -768,6 +790,7 @@ fn connectivity_passes_check(
     false
 }
 
+#[cfg(feature = "visual")]
 /// Sample an averaged background colour at a screen-coord position.
 /// Uses [`color::sample_window`] with the tuning's
 /// `background_sample_radius` (0 ⇒ single pixel, matching the
@@ -783,6 +806,7 @@ fn sample_background_at_screen(
     color::sample_window(ctx.image, crop_x, crop_y, tuning.background_sample_radius)
 }
 
+#[cfg(feature = "visual")]
 /// Group OCR lines into multi-line blocks via geometric clustering
 /// plus optional pixel-level boundary checks.
 ///
@@ -911,6 +935,7 @@ fn group_lines_into_blocks(
         .collect()
 }
 
+#[cfg(feature = "visual")]
 /// Take the screenshot, crop to the scope (with the OCR context
 /// padding), run ocrs, and produce one `OcrLine` per recognised
 /// `TextLine`. Shared by `VisualLocator::matches`, `list_text`, and
@@ -927,6 +952,7 @@ pub(crate) struct OcrResult {
     crop_origin: (i32, i32),
 }
 
+#[cfg(feature = "visual")]
 /// Per-frame OCR memo held on the `Session` (see `Session::visual_ocr_cache`).
 ///
 /// OCR is the dominant cost in the visual path — tens of seconds per
@@ -939,12 +965,14 @@ pub(crate) struct OcrResult {
 /// for a full-frame (unscoped) pass.
 type RegionKey = Option<(i32, i32, i32, i32)>;
 
+#[cfg(feature = "visual")]
 /// Memo key: the scoped region (`None` = full frame) plus the upscale factor
 /// the frame was OCR'd at. The factor is part of the key because the same frame
 /// and region OCR'd at different `with_upscale` factors yield different results,
 /// so they must not share a memo entry.
 type OcrCacheKey = (RegionKey, u32);
 
+#[cfg(feature = "visual")]
 #[derive(Default)]
 pub(crate) struct OcrCache {
     frame_hash: u64,
@@ -952,6 +980,7 @@ pub(crate) struct OcrCache {
     by_region: std::collections::HashMap<OcrCacheKey, Arc<OcrResult>>,
 }
 
+#[cfg(feature = "visual")]
 impl OcrCache {
     /// Look up `region` at `upscale` for the frame identified by `hash`. If
     /// `hash` differs from the cached frame, the whole memo is dropped first
@@ -974,6 +1003,7 @@ impl OcrCache {
     }
 }
 
+#[cfg(feature = "visual")]
 /// Content hash of a captured frame. Identical frames produce byte-identical
 /// PNGs (deterministic encoder + identical pixels), so this keys the memo; any
 /// change busts it. Non-cryptographic is fine — collisions only cost a
@@ -985,6 +1015,7 @@ fn frame_hash(png_bytes: &[u8]) -> u64 {
     h.finish()
 }
 
+#[cfg(feature = "visual")]
 async fn ocr_lines(
     session: &Arc<Session>,
     region: Option<Rect>,
@@ -1167,6 +1198,7 @@ async fn ocr_lines(
     Ok(arc)
 }
 
+#[cfg(feature = "visual")]
 /// Public-via-`Locator::list_text` enumeration. Drops the
 /// matcher's substring filter and returns one `TextHit` per OCR
 /// **block** — i.e. per geometric cluster of consecutive lines
@@ -1203,6 +1235,7 @@ pub(crate) async fn list_text(
         .collect())
 }
 
+#[cfg(feature = "visual")]
 /// Public-via-[`Session::recognized_text`] full-frame dump. OCRs the *entire*
 /// captured frame (no region crop, no substring filter) and returns one
 /// `TextHit` per recognised block, in reading order. The diagnostic for a
@@ -1234,6 +1267,7 @@ pub(crate) async fn recognized_text(session: &Arc<Session>, png: Vec<u8>) -> Res
         .collect())
 }
 
+#[cfg(feature = "visual")]
 /// Public-via-`Locator::list_labelled_regions`. Runs OCR + block
 /// grouping, then for each block runs `last_region_only` to find
 /// the visual container around the label. Heavier than `list_text`
@@ -1280,6 +1314,7 @@ pub(crate) async fn list_labelled_regions(
     Ok(pairs)
 }
 
+#[cfg(feature = "visual")]
 /// Normalize a string for case-fold and accent-insensitive matching:
 /// NFKD decomposition + lowercase + strip combining marks.
 ///
@@ -1299,6 +1334,7 @@ fn normalize_for_match(s: &str) -> String {
         .collect()
 }
 
+#[cfg(feature = "visual")]
 /// One way to flatten a block's words into a searchable string.
 /// `joined` is the haystack; `spans` is `(start, end)` byte offsets
 /// per word, aligned with `block.words`.
@@ -1308,11 +1344,13 @@ struct BlockVariant {
     spans: Vec<(usize, usize)>,
 }
 
+#[cfg(feature = "visual")]
 /// Maximum number of lines for which we generate all 2^(N-1) seam-
 /// choice variants. Above this, fall back to single-space-join only.
 /// Keeps the variant count bounded (16 at N=5, 32+ at N=6).
 const MAX_VARIANT_LINES: usize = 5;
 
+#[cfg(feature = "visual")]
 /// Generate every joiner-choice variant of a block: at each line
 /// break, pick either `" "` or `""` independently, then join all
 /// words under that choice. For N lines (N−1 seams), this produces
@@ -1384,6 +1422,7 @@ fn block_haystack_variants(block: &OcrBlock) -> Vec<BlockVariant> {
     variants
 }
 
+#[cfg(feature = "visual")]
 /// Find every (start, end) byte-offset range in `haystack` that
 /// matches `needle` under `mode`. Returns all non-overlapping
 /// matches so a line containing the needle multiple times produces
@@ -1430,6 +1469,7 @@ fn find_matches(haystack: &str, needle: &str, mode: MatchMode) -> Vec<(usize, us
     }
 }
 
+#[cfg(feature = "visual")]
 /// Levenshtein edit distance between two strings (char-wise).
 fn levenshtein(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
@@ -1450,6 +1490,7 @@ fn levenshtein(a: &str, b: &str) -> usize {
     prev[b.len()]
 }
 
+#[cfg(feature = "visual")]
 /// Edit-distance-tolerant substring search. Slides a window of
 /// `needle.word_count` consecutive haystack words and reports every window
 /// whose text is within a small normalized edit budget of the needle (≈1
@@ -1489,6 +1530,7 @@ fn fuzzy_find(h: &str, n: &str) -> Vec<(usize, usize)> {
     out
 }
 
+#[cfg(feature = "visual")]
 /// Map a `(match_start, match_end)` char-offset range back to the
 /// union bbox of the OCR words it overlaps. `spans` lists each word's
 /// `(start, end)` offset in the joined line string. Returns `None`
@@ -1528,6 +1570,7 @@ fn union_bbox_for_match(
     })
 }
 
+#[cfg(feature = "visual")]
 #[allow(dead_code)] // kept for unit tests; the main matcher now uses find_matches
 fn text_matches(haystack: &str, needle: &str, mode: MatchMode) -> bool {
     match mode {
@@ -1537,7 +1580,7 @@ fn text_matches(haystack: &str, needle: &str, mode: MatchMode) -> bool {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "visual"))]
 mod tests {
     use super::*;
 

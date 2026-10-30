@@ -12,17 +12,11 @@ use rmcp::model::CallToolResult;
 use rmcp::{tool, tool_router, ErrorData as McpError};
 
 use crate::params::{
-    FindTextParams, FindTextRegionsParams, ImageMatchParams, ListTextParams, QueryParams,
-    ReadTextParams, ReadValueParams, SessionIdParams, WaitForStdoutLineParams,
+    ImageMatchParams, QueryParams, ReadTextParams, ReadValueParams, SessionIdParams,
+    WaitForStdoutLineParams,
 };
 use crate::report::render_matches;
 use crate::UiTestServer;
-
-/// Default XPath scope for OCR-based inspection tools (`list_text`):
-/// the first element that exposes AT-SPI bounds, which is the
-/// toplevel widget area in every tested toolkit. Mirrors the same
-/// idiom the visual-locator e2e tests use as a "whole screen" scope.
-const DEFAULT_OCR_SCOPE: &str = "//*[@bbox][1]";
 
 fn bbox_json(r: &waydriver::Rect) -> serde_json::Value {
     serde_json::json!({
@@ -158,159 +152,6 @@ impl UiTestServer {
                     "minimum_increment": v.minimum_increment,
                 }))
                 .map_err(|e| waydriver::Error::process_with("serialize read_value result", e))
-            },
-        )
-        .await
-    }
-
-    #[tool(
-        description = "Find a single line of on-screen text via OCR and return its bounding box. \
-                       Use to inspect where a label is before deciding what to do (e.g. compute a \
-                       coordinate offset from it, or check whether it's painted at all). Doesn't \
-                       click — pair with `click_by_text` for that. Returns JSON of shape \
-                       `{found: bool, text: string, bounds: {x, y, width, height}}` on hit, or \
-                       `{found: false}` otherwise. Substring match, case-insensitive. \
-                       `scope_xpath` restricts the OCR region; omit to search the whole screen."
-    )]
-    pub(crate) async fn find_text(
-        &self,
-        Parameters(params): Parameters<FindTextParams>,
-    ) -> Result<CallToolResult, McpError> {
-        let text = params.text.clone();
-        let scope_xpath = params.scope_xpath.clone();
-        let match_mode = params.match_mode.unwrap_or_default();
-        let wait = params.timeout.timeout_ms;
-        self.run_action_within(
-            &params.session_id,
-            "find_text",
-            serde_json::json!({
-                "text": params.text,
-                "scope_xpath": params.scope_xpath,
-                "match_mode": params.match_mode,
-                "timeout_ms": params.timeout.timeout_ms,
-            }),
-            self.op_budget(wait, false),
-            |s| async move {
-                let locator = match &scope_xpath {
-                    Some(xpath) => s.locate(xpath).find_by_text(&text).await?,
-                    None => s.find_by_text(&text),
-                };
-                let locator = locator.with_match_mode(match_mode.to_waydriver());
-                // count() short-circuits the wait loop — bounds() would
-                // poll until timeout when the text is genuinely absent,
-                // and "missing" is a legitimate answer here, not an error.
-                let n = locator.count().await?;
-                let payload = if n == 0 {
-                    serde_json::json!({ "found": false })
-                } else {
-                    let r = locator.bounds().await?;
-                    serde_json::json!({
-                        "found": true,
-                        "text": text,
-                        "bounds": bbox_json(&r),
-                    })
-                };
-                serde_json::to_string_pretty(&payload)
-                    .map_err(|e| waydriver::Error::process_with("serialize find_text result", e))
-            },
-        )
-        .await
-    }
-
-    #[tool(
-        description = "Enumerate the full outer→inner chain of widget shapes (button pill, row, \
-                       card, dialog area) that enclose an OCR'd label. Returns a JSON array of \
-                       `{index, bounds, centroid: {x, y}, shape}` ordered with index 0 = \
-                       outermost (parent-adjacent ring) and the last entry = innermost (tightest \
-                       region around the text). \
-                       Pair with `click_text_region` and pass `region_index` to click a specific \
-                       level — useful when the typical innermost click hits the wrong widget \
-                       (e.g. clicks the label's frame instead of the row that owns activation). \
-                       `shape` is one of `Rectangle`, `Pill`, `Ellipse`, or `Irregular` (coarse \
-                       classification via fill-ratio + corner-inside test)."
-    )]
-    pub(crate) async fn find_text_regions(
-        &self,
-        Parameters(params): Parameters<FindTextRegionsParams>,
-    ) -> Result<CallToolResult, McpError> {
-        let scope_xpath = params.scope_xpath.clone();
-        let text = params.text.clone();
-        let match_mode = params.match_mode.unwrap_or_default();
-        let wait = params.timeout.timeout_ms;
-        self.run_action_within(
-            &params.session_id,
-            "find_text_regions",
-            serde_json::json!({
-                "text": params.text,
-                "scope_xpath": params.scope_xpath,
-                "match_mode": params.match_mode,
-                "timeout_ms": params.timeout.timeout_ms,
-            }),
-            self.op_budget(wait, false),
-            |s| async move {
-                let scope = s.locate(&scope_xpath);
-                let inner = scope
-                    .find_by_text(&text)
-                    .await?
-                    .with_match_mode(match_mode.to_waydriver());
-                let regions = scope.find_regions(&inner).await?;
-                let payload: Vec<_> = regions
-                    .iter()
-                    .enumerate()
-                    .map(|(i, r)| {
-                        let (cx, cy) = r.centroid();
-                        serde_json::json!({
-                            "index": i,
-                            "bounds": bbox_json(&r.bounds()),
-                            "centroid": { "x": cx, "y": cy },
-                            "shape": format!("{:?}", r.shape()),
-                        })
-                    })
-                    .collect();
-                serde_json::to_string_pretty(&payload).map_err(|e| {
-                    waydriver::Error::process_with("serialize find_text_regions result", e)
-                })
-            },
-        )
-        .await
-    }
-
-    #[tool(
-        description = "Enumerate every line of text OCR can recognise inside the scope. Returns \
-                       a JSON array of `{text, bounds}` entries (one per line; words joined with \
-                       spaces, bbox is the union over all words in the line). Useful for \
-                       discovery — \"what labels are visible right now?\" — before deciding \
-                       which one to click. \
-                       `scope_xpath` defaults to the toplevel widget area; pass a tighter \
-                       selector for faster, more accurate OCR."
-    )]
-    pub(crate) async fn list_text(
-        &self,
-        Parameters(params): Parameters<ListTextParams>,
-    ) -> Result<CallToolResult, McpError> {
-        let scope_xpath = params
-            .scope_xpath
-            .clone()
-            .unwrap_or_else(|| DEFAULT_OCR_SCOPE.to_string());
-        let wait = params.timeout.timeout_ms;
-        self.run_action_within(
-            &params.session_id,
-            "list_text",
-            serde_json::json!({ "scope_xpath": params.scope_xpath, "timeout_ms": params.timeout.timeout_ms }),
-            self.op_budget(wait, false),
-            |s| async move {
-                let hits = s.locate(&scope_xpath).list_text().await?;
-                let payload: Vec<_> = hits
-                    .into_iter()
-                    .map(|h| {
-                        serde_json::json!({
-                            "text": h.text,
-                            "bounds": bbox_json(&h.bounds),
-                        })
-                    })
-                    .collect();
-                serde_json::to_string_pretty(&payload)
-                    .map_err(|e| waydriver::Error::process_with("serialize list_text result", e))
             },
         )
         .await

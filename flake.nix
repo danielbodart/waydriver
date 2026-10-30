@@ -92,21 +92,6 @@
               cargo test -p waydriver-e2e -- --ignored --test-threads=1 "$@"
           '';
 
-          # The ocrs models behind the `visual` locator, fetched at build time
-          # so the server never downloads them on first use. The hashes are
-          # the ones `crates/waydriver/src/visual/models.rs` checks downloads
-          # against; bump both together.
-          ocrsModels = {
-            detection = pkgs.fetchurl {
-              url = "https://ocrs-models.s3-accelerate.amazonaws.com/text-detection.rten";
-              sha256 = "f15cfb56bd02c4bf478a20343986504a1f01e1665c2b3a0ad66340f054b1b5ca";
-            };
-            recognition = pkgs.fetchurl {
-              url = "https://ocrs-models.s3-accelerate.amazonaws.com/text-recognition.rten";
-              sha256 = "e484866d4cce403175bd8d00b128feb08ab42e208de30e42cd9889d8f1735a6e";
-            };
-          };
-
           # The private session bus the `mcp` wrapper runs the server on. Its
           # only activatable services are at-spi2-core's. With the system's
           # session.conf instead, the bus also activates the host's
@@ -169,8 +154,6 @@
             # GStreamer plugin paths (core, base, good, pipewire)
             export GST_PLUGIN_PATH="${gstPluginPath}"
             export ATSPI_DBUS_IMPLEMENTATION=dbus-daemon
-            export WAYDRIVER_OCRS_DETECTION_MODEL="''${WAYDRIVER_OCRS_DETECTION_MODEL:-${ocrsModels.detection}}"
-            export WAYDRIVER_OCRS_RECOGNITION_MODEL="''${WAYDRIVER_OCRS_RECOGNITION_MODEL:-${ocrsModels.recognition}}"
             exec 3>&1 1>&2
             exec ${pkgs.dbus}/bin/dbus-run-session --config-file=${sessionBusConfig} -- \
               ${pkgs.bash}/bin/bash -c 'exec "$0" "$@" 1>&3 3>&-' \

@@ -27,11 +27,11 @@ use rmcp::{tool, tool_router, ErrorData as McpError};
 use waydriver::keysym::parse_chord;
 
 use crate::params::{
-    ActivateActionParams, ClickByTextParams, ClickParams, ClickTextRegionParams, DoubleClickParams,
-    DragToCoordsParams, DragToParams, FillParams, FocusParams, HoverParams, ImageMatchParams,
-    LaunchSecondaryParams, MovePointerAbsoluteParams, MovePointerParams, PointerClickParams,
-    PressKeyParams, RightClickParams, ScrollParams, SelectOptionByParam, SelectOptionParams,
-    SetTextParams, TypeTextParams,
+    ActivateActionParams, ClickParams, DoubleClickParams, DragToCoordsParams, DragToParams,
+    FillParams, FocusParams, HoverParams, ImageMatchParams, LaunchSecondaryParams,
+    MovePointerAbsoluteParams, MovePointerParams, PointerClickParams, PressKeyParams,
+    RightClickParams, ScrollParams, SelectOptionByParam, SelectOptionParams, SetTextParams,
+    TypeTextParams,
 };
 use crate::UiTestServer;
 
@@ -543,131 +543,13 @@ impl UiTestServer {
     }
 
     #[tool(
-        description = "Click a UI element by its visible on-screen text via OCR. Use as a \
-                       fallback when the target widget isn't in the AT-SPI tree but its label is \
-                       rendered (e.g. libadwaita lazy-realization bugs, custom-painted toolkits). \
-                       Slower than AT-SPI `click` (~200-500ms for OCR + screenshot, plus a one- \
-                       time ~1-2s ocrs model load on first call) — reach for it only when AT-SPI \
-                       can't reach the widget. \
-                       Optional `scope_xpath` restricts OCR to that element's AT-SPI bounds — \
-                       smaller crop = faster + fewer false positives. Whole row of an \
-                       AdwSwitchRow / AdwButtonRow activates on any-point click, so OCR-clicking \
-                       the title text reliably toggles/triggers the row. \
-                       Requires the `visual` Cargo feature (always enabled in this server build)."
-    )]
-    pub(crate) async fn click_by_text(
-        &self,
-        Parameters(params): Parameters<ClickByTextParams>,
-    ) -> Result<CallToolResult, McpError> {
-        let text = params.text.clone();
-        let scope_xpath = params.scope_xpath.clone();
-        let match_mode = params.match_mode.unwrap_or_default();
-        let wait = params.timeout.timeout_ms;
-        self.run_action_within(
-            &params.session_id,
-            "click_by_text",
-            serde_json::json!({
-                "text": params.text,
-                "scope_xpath": params.scope_xpath,
-                "match_mode": params.match_mode,
-                "timeout_ms": params.timeout.timeout_ms,
-            }),
-            self.op_budget(wait, false),
-            |s| async move {
-                let locator = match &scope_xpath {
-                    Some(xpath) => s.locate(xpath).find_by_text(&text).await?,
-                    None => s.find_by_text(&text),
-                };
-                locator
-                    .with_match_mode(match_mode.to_waydriver())
-                    .click()
-                    .await?;
-                Ok(match scope_xpath {
-                    Some(xpath) => format!("Clicked text {text:?} inside {xpath}"),
-                    None => format!("Clicked text {text:?}"),
-                })
-            },
-        )
-        .await
-    }
-
-    #[tool(
-        description = "Find on-screen text via OCR, then flood-fill the enclosing widget shape \
-                       (button pill, row background, card frame) and click its centroid — not \
-                       the text glyphs. More reliable than `click_by_text` for widgets that \
-                       route activation to the row/pill rather than the label, e.g. AdwButtonRow \
-                       or AdwSwitchRow. Requires `scope_xpath` (a parent element with AT-SPI \
-                       bounds) because the flood-fill needs a known starting region — typically \
-                       the surrounding dialog or pane. \
-                       Heavier than `click_by_text` (one extra flood-fill per call); reach for \
-                       it when text-bbox clicking doesn't activate the widget. \
-                       `region_index` picks a specific level of the outer→inner enclosing-region \
-                       chain (call `find_text_regions` first to see what's available). Omit to \
-                       click the innermost region — the typical row/pill activation pattern."
-    )]
-    pub(crate) async fn click_text_region(
-        &self,
-        Parameters(params): Parameters<ClickTextRegionParams>,
-    ) -> Result<CallToolResult, McpError> {
-        let scope_xpath = params.scope_xpath.clone();
-        let text = params.text.clone();
-        let region_index = params.region_index;
-        let match_mode = params.match_mode.unwrap_or_default();
-        let wait = params.timeout.timeout_ms;
-        self.run_action_within(
-            &params.session_id,
-            "click_text_region",
-            serde_json::json!({
-                "text": params.text,
-                "scope_xpath": params.scope_xpath,
-                "region_index": params.region_index,
-                "match_mode": params.match_mode,
-                "timeout_ms": params.timeout.timeout_ms,
-            }),
-            self.op_budget(wait, false),
-            |s| async move {
-                let scope = s.locate(&scope_xpath);
-                let inner = scope
-                    .find_by_text(&text)
-                    .await?
-                    .with_match_mode(match_mode.to_waydriver());
-                match region_index {
-                    None => {
-                        // Default: innermost (last_region — cheap, one flood-fill).
-                        scope.last_region(&inner).await?.click().await?;
-                        Ok(format!(
-                            "Clicked innermost region of text {text:?} inside {scope_xpath}"
-                        ))
-                    }
-                    Some(i) => {
-                        // Indexed: full chain walk needed.
-                        let regions = scope.find_regions(&inner).await?;
-                        let total = regions.len();
-                        let chosen = regions.into_iter().nth(i).ok_or_else(|| {
-                            waydriver::Error::visual(format!(
-                                "region_index {i} out of range — chain has {total} region(s); \
-                                 call find_text_regions to inspect"
-                            ))
-                        })?;
-                        chosen.click().await?;
-                        Ok(format!(
-                            "Clicked region {i}/{total} of text {text:?} inside {scope_xpath}"
-                        ))
-                    }
-                }
-            },
-        )
-        .await
-    }
-
-    #[tool(
         description = "Click a UI element by matching a reference PNG against the current \
                        screenshot (template matching via normalized cross-correlation). Use for \
                        icon-only buttons that have no on-screen text and aren't queryable via \
                        AT-SPI. The reference image is read from `png_path` and matched at full \
                        size — capture it from a screenshot of the same app, with the same theme \
                        and DPI, and commit it next to the test. Brittle to theme/DPI changes; \
-                       prefer AT-SPI or `click_by_text` when either is available. \
+                       prefer AT-SPI when it is available. \
                        Optional `scope_xpath` crops the search to that element's bounds (faster, \
                        fewer false positives). `threshold` is the NCC cutoff in [0, 1]; higher \
                        is stricter (library default 0.9)."

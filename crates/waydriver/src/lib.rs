@@ -33,7 +33,7 @@ pub mod session;
 pub mod sink;
 /// OCR-backed visual locator for widgets that don't surface in AT-SPI.
 /// Opt-in via the `visual` Cargo feature.
-#[cfg(feature = "visual")]
+#[cfg(feature = "visual-image")]
 pub mod visual;
 
 pub use atspi::{CachedAccessible, Rect, ValueInfo};
@@ -49,7 +49,7 @@ pub use session::{
     SecondaryInstance, Session, SessionConfig, VisualRegionTuning, VisualTextTuning,
 };
 pub use sink::{CapturedNotification, CapturedOpenUri, ExternalSinks};
+#[cfg(feature = "visual-image")]
+pub use visual::{BaselineComparison, ImageLocator, RegionLocator, Shape};
 #[cfg(feature = "visual")]
-pub use visual::{
-    BaselineComparison, ImageLocator, MatchMode, RegionLocator, Shape, TextHit, VisualLocator,
-};
+pub use visual::{MatchMode, TextHit, VisualLocator};

@@ -20,7 +20,11 @@ test-support = []
 # files downloaded to `$XDG_CACHE_HOME/waydriver/ocrs-models/` on first
 # use). Off by default; consumers opt in for tests that need to drive
 # widgets missing from the AT-SPI tree.
-visual = ["dep:ocrs", "dep:rten", "dep:rten-imageproc", "dep:ureq", "dep:palette", "dep:unicode-normalization", "dep:sha2", "dep:hex", "dep:imageproc"]
+visual = ["visual-image", "dep:ocrs", "dep:rten", "dep:rten-imageproc", "dep:ureq", "dep:unicode-normalization", "dep:sha2", "dep:hex"]
+# The pixel-only half of `visual`, without OCR: template matching
+# (`find_image`), region flood-fill (`region_at`) and baseline comparison.
+# Needs no model files.
+visual-image = ["dep:palette", "dep:imageproc"]
 
 [dependencies]
 async-trait.workspace = true

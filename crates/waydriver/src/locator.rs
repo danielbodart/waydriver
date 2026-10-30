@@ -1177,7 +1177,7 @@ impl Locator {
     /// the matching algorithm and when to reach for this vs.
     /// [`find_by_text`](Self::find_by_text). Requires the `visual`
     /// Cargo feature.
-    #[cfg(feature = "visual")]
+    #[cfg(feature = "visual-image")]
     pub async fn find_image(&self, png_bytes: &[u8]) -> Result<crate::visual::ImageLocator> {
         let info = self.wait_for_existing().await?;
         let bounds = info.bounds.ok_or_else(|| {
@@ -1208,7 +1208,7 @@ impl Locator {
     ///
     /// Use `//Window` (or any toplevel selector) to diff the whole
     /// window. Requires the `visual` Cargo feature.
-    #[cfg(feature = "visual")]
+    #[cfg(feature = "visual-image")]
     pub async fn compare_to_baseline(
         &self,
         baseline_png: &[u8],
