@@ -93,23 +93,18 @@
           '';
 
           # The ocrs models behind the `visual` locator, fetched at build time
-          # so the server never downloads them on first use. The hashes and
-          # mirrors are the ones `crates/waydriver/src/visual/models.rs`
-          # checks downloads against; bump both together. Upstream has
-          # deprecated the `.rten` files and taken them off its S3 bucket
-          # (robertknight/ocrs#282), so the Hugging Face mirrors, pinned to a
-          # revision, serve the same bytes until it comes back.
-          ocrsModel = name: sha256: pkgs.fetchurl {
-            urls = [
-              "https://ocrs-models.s3-accelerate.amazonaws.com/${name}"
-              "https://huggingface.co/Pieces/ocrs-mirror/resolve/fad3720109ad35b579f6bc6501290d1a2388ad11/${name}"
-              "https://huggingface.co/lukesutor/ocrs/resolve/fd1a72bc9682fe5244d67461efbf0d49c692d340/${name}"
-            ];
-            inherit sha256;
-          };
+          # so the server never downloads them on first use. The hashes are
+          # the ones `crates/waydriver/src/visual/models.rs` checks downloads
+          # against; bump both together.
           ocrsModels = {
-            detection = ocrsModel "text-detection.rten" "f15cfb56bd02c4bf478a20343986504a1f01e1665c2b3a0ad66340f054b1b5ca";
-            recognition = ocrsModel "text-recognition.rten" "e484866d4cce403175bd8d00b128feb08ab42e208de30e42cd9889d8f1735a6e";
+            detection = pkgs.fetchurl {
+              url = "https://ocrs-models.s3-accelerate.amazonaws.com/text-detection.rten";
+              sha256 = "f15cfb56bd02c4bf478a20343986504a1f01e1665c2b3a0ad66340f054b1b5ca";
+            };
+            recognition = pkgs.fetchurl {
+              url = "https://ocrs-models.s3-accelerate.amazonaws.com/text-recognition.rten";
+              sha256 = "e484866d4cce403175bd8d00b128feb08ab42e208de30e42cd9889d8f1735a6e";
+            };
           };
 
           # The private session bus the `mcp` wrapper runs the server on. Its

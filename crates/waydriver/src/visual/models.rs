@@ -14,14 +14,12 @@
 //!    The cached file's SHA-256 is verified against the constants
 //!    below; on mismatch the file is treated as corrupted and
 //!    re-downloaded.
-//! 3. **Auto-download** — fetch into the XDG cache directory from
-//!    ocrs's published S3 bucket, falling back to Hugging Face mirrors
-//!    of the same files. Upstream has deprecated the `.rten` files and
-//!    taken them off S3 (robertknight/ocrs#282); the mirrors are pinned
-//!    to a revision and checked against the same hashes, so every
-//!    source yields identical bytes. The downloaded bytes are hashed
-//!    before the `.partial → .rten` rename so a corrupted download
-//!    never becomes a cache hit.
+//! 3. **Auto-download** — fetch from ocrs's published S3 bucket into
+//!    the XDG cache directory. The download URL matches what ocrs-cli
+//!    uses by default, so the binary content is identical to what an
+//!    out-of-band `ocrs` install would have downloaded. The downloaded
+//!    bytes are hashed before the `.partial → .rten` rename so a
+//!    corrupted download never becomes a cache hit.
 //!
 //! ## Bumping the hashes
 //!
@@ -33,8 +31,7 @@
 //! curl -sL https://ocrs-models.s3-accelerate.amazonaws.com/text-recognition.rten | sha256sum
 //! ```
 //!
-//! and update `DETECTION_SHA256` / `RECOGNITION_SHA256` accordingly,
-//! along with `MODEL_MIRRORS` and the `ocrsModels` in `flake.nix`.
+//! and update `DETECTION_SHA256` / `RECOGNITION_SHA256` accordingly.
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -44,14 +41,9 @@ use sha2::{Digest, Sha256};
 
 use crate::error::{Error, Result};
 
-/// Base URLs the model files are fetched from, tried in order. Each
-/// serves both files under their [`DETECTION_FILENAME`] /
-/// [`RECOGNITION_FILENAME`] names; keep in step with `flake.nix`.
-const MODEL_MIRRORS: &[&str] = &[
-    "https://ocrs-models.s3-accelerate.amazonaws.com",
-    "https://huggingface.co/Pieces/ocrs-mirror/resolve/fad3720109ad35b579f6bc6501290d1a2388ad11",
-    "https://huggingface.co/lukesutor/ocrs/resolve/fd1a72bc9682fe5244d67461efbf0d49c692d340",
-];
+const DETECTION_URL: &str = "https://ocrs-models.s3-accelerate.amazonaws.com/text-detection.rten";
+const RECOGNITION_URL: &str =
+    "https://ocrs-models.s3-accelerate.amazonaws.com/text-recognition.rten";
 
 const DETECTION_FILENAME: &str = "text-detection.rten";
 const RECOGNITION_FILENAME: &str = "text-recognition.rten";
@@ -84,16 +76,11 @@ pub(super) fn ensure_models() -> Result<(PathBuf, PathBuf)> {
     let detection_path = cache_dir.join(DETECTION_FILENAME);
     let recognition_path = cache_dir.join(RECOGNITION_FILENAME);
 
-    ensure_one_model(
-        &cache_dir,
-        &detection_path,
-        DETECTION_FILENAME,
-        DETECTION_SHA256,
-    )?;
+    ensure_one_model(&cache_dir, &detection_path, DETECTION_URL, DETECTION_SHA256)?;
     ensure_one_model(
         &cache_dir,
         &recognition_path,
-        RECOGNITION_FILENAME,
+        RECOGNITION_URL,
         RECOGNITION_SHA256,
     )?;
 
@@ -105,12 +92,11 @@ pub(super) fn ensure_models() -> Result<(PathBuf, PathBuf)> {
 /// - If the file exists, verify its SHA-256. On mismatch (corrupted /
 ///   stale cache), delete and re-download.
 /// - If the file doesn't exist, download to a `*.partial` sibling,
-///   hash, and only rename to the final name when the hash matches,
-///   trying each of [`MODEL_MIRRORS`] in turn until one succeeds.
+///   hash, and only rename to the final name when the hash matches.
 fn ensure_one_model(
     cache_dir: &std::path::Path,
     dest: &std::path::Path,
-    filename: &str,
+    url: &str,
     expected_sha256: &str,
 ) -> Result<()> {
     if dest.exists() {
@@ -132,21 +118,7 @@ fn ensure_one_model(
             cache_dir.display()
         ))
     })?;
-    let mut failures = Vec::new();
-    for mirror in MODEL_MIRRORS {
-        let url = format!("{mirror}/{filename}");
-        match download_to(&url, dest, expected_sha256) {
-            Ok(()) => return Ok(()),
-            Err(e) => {
-                tracing::warn!(%url, err = %e, "visual: ocrs model mirror failed, trying the next");
-                failures.push(e.to_string());
-            }
-        }
-    }
-    Err(Error::visual(format!(
-        "failed to download {filename} from every mirror: {}",
-        failures.join("; ")
-    )))
+    download_to(url, dest, expected_sha256)
 }
 
 /// Read `path` and verify its SHA-256 matches `expected_hex` (32-byte
