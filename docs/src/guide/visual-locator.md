@@ -102,7 +102,9 @@ The `OcrEngine` is loaded **once per session** into a shared
 2. **XDG cache hit** — `$XDG_CACHE_HOME/waydriver/ocrs-models/` (or
    `~/.cache/...`) has both files.
 3. **Auto-download** — fetch from the ocrs project's S3 bucket into
-   the XDG cache. First call only; subsequent runs hit (2).
+   the XDG cache, falling back to pinned Hugging Face mirrors of the
+   same files (upstream has taken the `.rten` files off S3, see
+   robertknight/ocrs#282). First call only; subsequent runs hit (2).
 
 Set [`SessionConfig::prewarm_visual = true`](https://docs.rs/waydriver/latest/waydriver/struct.SessionConfig.html#structfield.prewarm_visual)
 to spawn the engine load as a background task during `Session::start`
