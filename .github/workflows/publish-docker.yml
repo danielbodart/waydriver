@@ -77,17 +77,17 @@ jobs:
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Platform pair label
         id: platform
         # linux/amd64 -> linux-amd64 (usable in artifact names and cache scopes)
         run: echo "pair=$(echo '${{ matrix.platform }}' | tr '/' '-')" >> "$GITHUB_OUTPUT"
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Log in to ghcr.io
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -95,7 +95,7 @@ jobs:
 
       - name: Build and push builder by digest
         id: build-builder
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           target: builder-base
@@ -110,7 +110,7 @@ jobs:
 
       - name: Build and push runtime by digest
         id: build-runtime
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: ${{ matrix.platform }}
@@ -133,7 +133,7 @@ jobs:
           touch "/tmp/digests/runtime/${runtime_digest#sha256:}"
 
       - name: Upload builder digest
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: digests-builder-${{ steps.platform.outputs.pair }}
           path: /tmp/digests/builder/*
@@ -141,7 +141,7 @@ jobs:
           retention-days: 1
 
       - name: Upload runtime digest
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: digests-runtime-${{ steps.platform.outputs.pair }}
           path: /tmp/digests/runtime/*
@@ -168,7 +168,7 @@ jobs:
             description: Build environment for apps tested with waydriver-mcp (Fedora + Rust + GTK4 dev headers)
     steps:
       - name: Download digests
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: /tmp/digests
           pattern: digests-${{ matrix.artifact }}-*
@@ -182,7 +182,7 @@ jobs:
       # exceeded`) even though the per-arch builds and the push all succeeded.
 
       - name: Log in to ghcr.io
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -190,7 +190,7 @@ jobs:
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ needs.prepare.outputs.owner }}/${{ matrix.image }}
           tags: |
