@@ -1,0 +1,63 @@
+name: Bump flake.lock
+
+# A fork-only addition, beside cachix.yml: move flake.lock to the head of the
+# channel it already tracks once a week, in the window all of danielbodart's
+# flakes share (Sunday 21:23 UTC, two hours before the NixOS config that
+# consumes them bumps its own), so the fork's own lock never lags months
+# behind the nixpkgs a config builds it against.
+#
+# The new lock is committed only if .#mcp builds with it, and what that builds
+# goes to the danielbodart Cachix cache. A push with GITHUB_TOKEN starts no
+# workflow, so this then starts cachix.yml on main, which builds the bumped
+# lock on both architectures beside the channel heads. Nothing else that runs
+# on a push to main reads flake.lock: CI, release-plz and the Docker image
+# build with cargo.
+on:
+  schedule:
+    - cron: "23 21 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+# cachix.yml's group: its scheduled upstream sync also writes main, and the
+# run started below waits here until this one has pushed.
+concurrency:
+  group: cachix-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+
+      - uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
+        with:
+          name: danielbodart
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - name: Update the lock, build .#mcp, and commit and push when it moved
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          nix flake update 2>&1 | tee update.log
+          git diff --quiet flake.lock && { echo "Nothing moved."; exit 0; }
+          moved=$(grep -oE "Updated input '[^']+'" update.log | cut -d"'" -f2 | paste -sd, - | sed 's/,/, /g')
+          nix build -L .#mcp
+          echo "\`lock\` on \`$(uname -m)\`: \`$(readlink result)\`" >>"$GITHUB_STEP_SUMMARY"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -qm "chore(nix): bump flake.lock ($moved)" flake.lock
+          git pull -q --rebase origin main
+          git push -q origin HEAD:main
+          gh workflow run cachix.yml --ref main
