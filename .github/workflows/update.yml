@@ -1,17 +1,22 @@
-name: Bump flake.lock
+name: Weekly update
 
-# A fork-only addition, beside cachix.yml: move flake.lock to the head of the
-# channel it already tracks once a week, in the window all of danielbodart's
-# flakes share (Sunday 21:23 UTC, two hours before the NixOS config that
-# consumes them bumps its own), so the fork's own lock never lags months
-# behind the nixpkgs a config builds it against.
+# A fork-only addition, beside cachix.yml, and the weekly update every
+# danielbodart repository has: once a week it moves every flake input (the
+# fork's flake.lock; the flake and its nixos-unstable are upstream's, as are
+# Cargo.lock and the Docker images, which upstream's own tooling moves and the
+# fork takes by merging upstream).
 #
-# The new lock is committed only if .#mcp builds with it, and what that builds
-# goes to the danielbodart Cachix cache. A push with GITHUB_TOKEN starts no
-# workflow, so this then starts cachix.yml on main, which builds the bumped
-# lock on both architectures beside the channel heads. Nothing else that runs
-# on a push to main reads flake.lock: CI, release-plz and the Docker image
-# build with cargo.
+# Sunday 21:23 UTC, the window all of danielbodart's repositories share, two
+# hours before nix-config takes its own update at 23:23, so the fork's lock
+# never lags months behind the nixpkgs a config builds it against.
+#
+# The new lock is committed only if .#mcp builds with it, and then .#mcp, the
+# fork's one package output, goes to the danielbodart Cachix cache. Nothing is
+# released: the fork publishes no releases of its own. A push with
+# GITHUB_TOKEN starts no workflow, so this then starts cachix.yml on main,
+# which builds the moved lock on both architectures beside the channel heads.
+# Nothing else that runs on a push to main reads flake.lock: CI, release-plz
+# and the Docker image build with cargo.
 on:
   schedule:
     - cron: "23 21 * * 0"
@@ -21,14 +26,12 @@ permissions:
   contents: write
   actions: write
 
-# cachix.yml's group: its scheduled upstream sync also writes main, and the
-# run started below waits here until this one has pushed.
 concurrency:
-  group: cachix-${{ github.ref }}
+  group: update
   cancel-in-progress: false
 
 jobs:
-  bump:
+  update:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -41,15 +44,18 @@ jobs:
             experimental-features = nix-command flakes
             access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
 
+      # Pulls only: what is pushed is named below.
       - uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
         with:
           name: danielbodart
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skipPush: true
 
-      - name: Update the lock, build .#mcp, and commit and push when it moved
+      - name: Move the flake's inputs, build .#mcp, commit and push, then push .#mcp to the cache
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           nix flake update 2>&1 | tee update.log
           git diff --quiet flake.lock && { echo "Nothing moved."; exit 0; }
           moved=$(grep -oE "Updated input '[^']+'" update.log | cut -d"'" -f2 | paste -sd, - | sed 's/,/, /g')
@@ -57,7 +63,8 @@ jobs:
           echo "\`lock\` on \`$(uname -m)\`: \`$(readlink result)\`" >>"$GITHUB_STEP_SUMMARY"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -qm "chore(nix): bump flake.lock ($moved)" flake.lock
+          git commit -qm "Weekly update: ${moved:-flake.lock}" flake.lock
           git pull -q --rebase origin main
           git push -q origin HEAD:main
+          nix build --print-out-paths .#mcp | cachix push danielbodart
           gh workflow run cachix.yml --ref main
