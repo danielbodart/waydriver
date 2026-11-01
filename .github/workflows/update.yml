@@ -10,13 +10,13 @@ name: Weekly update
 # hours before nix-config takes its own update at 23:23, so the fork's lock
 # never lags months behind the nixpkgs a config builds it against.
 #
-# The new lock is committed only if .#mcp builds with it, and then .#mcp, the
-# fork's one package output, goes to the danielbodart Cachix cache. Nothing is
-# released: the fork publishes no releases of its own. A push with
-# GITHUB_TOKEN starts no workflow, so this then starts cachix.yml on main,
-# which builds the moved lock on both architectures beside the channel heads.
-# Nothing else that runs on a push to main reads flake.lock: CI, release-plz
-# and the Docker image build with cargo.
+# The new lock is committed only if .#mcp, the fork's one package output,
+# builds with it on both x86_64-linux and aarch64-linux. Nothing is released:
+# the fork publishes no releases of its own. A push with GITHUB_TOKEN starts
+# no workflow, so this then starts cachix.yml on main, which builds the moved
+# lock on both architectures beside the channel heads and pushes .#mcp to the
+# danielbodart Cachix cache. Nothing else that runs on a push to main reads
+# flake.lock: CI, release-plz and the Docker image build with cargo.
 on:
   schedule:
     - cron: "23 21 * * 0"
@@ -30,9 +30,15 @@ concurrency:
   group: update
   cancel-in-progress: false
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   update:
     runs-on: ubuntu-latest
+    outputs:
+      moved: ${{ steps.lock.outputs.moved }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -44,27 +50,81 @@ jobs:
             experimental-features = nix-command flakes
             access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
 
-      # Pulls only: what is pushed is named below.
+      - name: Move the flake's inputs
+        id: lock
+        run: |
+          nix flake update 2>&1 | tee update.log
+          if git diff --quiet flake.lock; then
+            echo "Nothing moved." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          moved=$(grep -oE "Updated input '[^']+'" update.log | cut -d"'" -f2 | paste -sd, - | sed 's/,/, /g')
+          echo "moved=${moved:-flake.lock}" >>"$GITHUB_OUTPUT"
+          echo "Weekly update: ${moved:-flake.lock}" >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the candidate flake.lock
+        if: steps.lock.outputs.moved != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lock
+          path: flake.lock
+          retention-days: 1
+
+  gate:
+    needs: update
+    if: needs.update.outputs.moved != ''
+    strategy:
+      fail-fast: true
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: lock
+
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+
+      # Pulls only: cachix.yml pushes once the lock has landed.
       - uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
         with:
           name: danielbodart
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
           skipPush: true
 
-      - name: Move the flake's inputs, build .#mcp, commit and push, then push .#mcp to the cache
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build .#mcp against the moved lock
         run: |
-          set -euo pipefail
-          nix flake update 2>&1 | tee update.log
-          git diff --quiet flake.lock && { echo "Nothing moved."; exit 0; }
-          moved=$(grep -oE "Updated input '[^']+'" update.log | cut -d"'" -f2 | paste -sd, - | sed 's/,/, /g')
           nix build -L .#mcp
           echo "\`lock\` on \`$(uname -m)\`: \`$(readlink result)\`" >>"$GITHUB_STEP_SUMMARY"
+
+  commit:
+    needs: [update, gate]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: lock
+
+      - name: Commit and push, then build and push .#mcp to the cache through cachix.yml
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MOVED: ${{ needs.update.outputs.moved }}
+        run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -qm "Weekly update: ${moved:-flake.lock}" flake.lock
+          git commit -qm "Weekly update: $MOVED" flake.lock
           git pull -q --rebase origin main
           git push -q origin HEAD:main
-          nix build --print-out-paths .#mcp | cachix push danielbodart
           gh workflow run cachix.yml --ref main

@@ -30,6 +30,10 @@ concurrency:
   group: cachix-${{ github.ref }}
   cancel-in-progress: false
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   # Merge upstream's main before a scheduled build. Fails, and so says so,
   # when that needs a hand: a conflict, or an upstream change to a workflow,
@@ -37,6 +41,10 @@ jobs:
   sync:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    # It commits to main, so it waits its turn with the Weekly update.
+    concurrency:
+      group: update
+      cancel-in-progress: false
     steps:
       - name: Merge upstream
         env:

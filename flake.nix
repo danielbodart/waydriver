@@ -1,5 +1,6 @@
 {
   inputs = {
+    # nixos-unstable, not nixos-26.05: upstream's flake, kept so the fork's automatic upstream sync never conflicts (FORK.md).
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   };
 
